@@ -3,7 +3,7 @@
 **Analyze suspicious messages and URLs instantly — a rule-based fraud & scam detection engine with a live web app and Chrome extension.**
 
 🔗 **Live demo:** [frauddetector.in](https://frauddetector.in)
-👤 **Built by:** Piyush Verma — [LinkedIn](https://www.linkedin.com/in/piyush-verma-46a040330) · [GitHub](https://github.com/Piyush-Verma-07)
+👤 **Built by:** Piyush Verma — [LinkedIn](https://www.linkedin.com/in/-piyush-verma) · [GitHub](https://github.com/Piyush-Verma-07)
 
 > Full source code is kept in a private repository to protect ongoing commercial use of this product. This repo is a technical showcase — architecture, design decisions, and results. **Source access is available on request for recruiters and interviewers.**
 

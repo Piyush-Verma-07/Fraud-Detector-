@@ -1,100 +1,142 @@
-# Fraud Detector
+# Fraud Detector — Scam & Phishing Detection System
 
-**Analyze suspicious messages and URLs instantly — a rule-based fraud & scam detection engine with a live web app and Chrome extension.**
+A modular fraud detection system I built to catch scam messages and phishing links — the kind that impersonate a bank, threaten account suspension, or promise an unrealistic investment return. It looks at a message, a URL, or both, and gives back a risk score, a verdict, and plain-language reasons for why.
 
 🔗 **Live demo:** [frauddetector.in](https://frauddetector.in)
 👤 **Built by:** Piyush Verma — [LinkedIn](https://www.linkedin.com/in/-piyush-verma) · [GitHub](https://github.com/Piyush-Verma-07)
 
-> Full source code is kept in a private repository to protect ongoing commercial use of this product. This repo is a technical showcase — architecture, design decisions, and results. **Source access is available on request for recruiters and interviewers.**
+> The production codebase lives in a private repository, since this is a live product I'm continuing to run and develop. This repo is the public-facing writeup — what it does, how it's built, and what I learned building it. Happy to grant read access or walk through the code with anyone reviewing it for a hiring decision.
 
 ---
 
-## What it does
+## Why I built it this way
 
-Paste a message, a URL, or both — the engine returns a **0–100 risk score**, a **verdict** (Safe / Suspicious / High Risk), and **plain-language reasons** explaining exactly why.
+A message containing the word "verify" isn't automatically a scam. A weird-looking URL isn't automatically malicious either. Most of the simple detectors I looked at before starting this just keyword-match and call it a day, which means they're wrong a lot — in both directions.
 
-Unlike most "AI fraud detector" demos, this is **not an LLM call wrapped in a UI.** It's a fully rule-based scoring engine — every signal, every weight, and every reason shown to the user is deterministic and explainable, which matters for a trust & safety tool where "the AI said so" isn't good enough.
+So instead of one big if/else chain, Fraud Detector treats detection as evidence-gathering: several independent checks run against the input, each contributing weak or strong evidence, and a separate aggregation step combines everything into a score and a verdict. No single signal decides the outcome on its own.
 
-| Input | Result |
+It's also deliberately **not** an LLM wrapped in a chat UI. Everything is rule-based and deterministic, which means every verdict is explainable and reproducible — ask it twice, get the same answer, and get a real reason why, not a hallucinated one.
+
+## See it in action
+
+| You paste this | You get this |
 |---|---|
 | `Hey, are we still meeting for lunch tomorrow at 1pm?` | **Risk Score: 0 — SAFE** |
-| `You have won a free gift card! Claim it now at www.prize-rewards-today.com before it expires` | **Risk Score: 75 — HIGH RISK** (urgency language, prize/reward scam language, suspicious URL) |
-| `Dear customer, your KYC has expired. Click here to verify immediately... http://bit.ly/verify-kyc-now` | **Risk Score: 93 — HIGH RISK** (fear-based language, urgency language, account verification language, shortened URL, HTTP instead of HTTPS, uncommon TLD) |
+| `You have won a free gift card! Claim it now at www.prize-rewards-today.com before it expires` | **Risk Score: 75 — HIGH RISK** — urgency language, prize/reward scam pattern, suspicious URL |
+| `Dear customer, your KYC has expired. Click here to verify immediately... http://bit.ly/verify-kyc-now` | **Risk Score: 93 — HIGH RISK** — fear-based language, urgency, account-verification pattern, shortened link, plain HTTP, uncommon TLD |
 
----
-
-## Screenshots
+### Screenshots
 
 **Homepage**
 ![Homepage](screenshots/01-homepage.jpg)
 
-**Safe message**
+**A safe message, left alone**
 ![Safe result](screenshots/02-safe-result.jpg)
 
-**High risk — prize scam**
+**A prize scam, flagged**
 ![High risk prize scam](screenshots/03-high-risk-prize-scam.jpg)
 
-**High risk — KYC phishing with shortened URL**
+**KYC phishing with a shortened link, flagged**
 ![High risk KYC phishing](screenshots/04-high-risk-kyc-phishing.jpg)
 
 ---
 
-## Key highlights
+## How a request actually flows through it
 
-- **Multi-signal rule-based scoring** — independent detection signals for text (urgency, fear/threat language, KYC/verification requests, prize/reward and investment scam patterns) and for URLs (domain structure, typosquatting, brand impersonation, shortened-link detection, suspicious TLDs, HTTP-vs-HTTPS)
-- **Real threat-intelligence integration** — cross-checks against Google Safe Browsing, AbuseIPDB, and WHOIS/domain-age data; provider outages are handled gracefully and reported as a separate *analysis-completeness* level instead of silently affecting the risk score
-- **One engine, three clients** — a versioned internal API layer is shared by the web app, a Chrome extension, and (in earlier iterations) an Android client, so detection logic can never silently drift between surfaces
-- **Privacy-first by design** — no raw submitted message or URL is ever persisted to storage; results live only in a short-lived session for the redirect-after-submit cycle, then are gone
-- **Careful, incremental architecture evolution** — the current (V2) detection pipeline was built and rolled out *side-by-side* with the original (V1) version behind a separate route, tested in isolation, and only promoted once verified — rather than a risky in-place rewrite
-- **Production security hardening** — HSTS and standard security headers, environment-gated secure session cookies, `HttpOnly`/`SameSite` cookie flags, request-size limits and safe error handling on all API routes
-- **Structured, traceable logging** — every analysis request is logged with a unique request ID at each lifecycle stage (started / completed / rejected / errored), without ever logging the submitted content itself
-- **Evaluated, not just vibes** — tested against a 150+ case labeled corpus to measure precision and false-positive rate, with measured false negatives driving targeted signal improvements
+```text
+             User Input
+                 |
+                 v
+          Input Validation
+                 |
+                 v
+          Analysis Engine
+                 |
+         +-------+-------+
+         |               |
+         v               v
+    Text Analysis    URL Analysis
+         |               |
+         +-------+-------+
+                 |
+                 v
+      External Threat Intelligence
+                 |
+                 v
+        Evidence Aggregation
+                 |
+                 v
+          Risk Assessment
+                 |
+         +-------+-------+
+         |               |
+         v               v
+     Risk Verdict   Analysis Status
+         |               |
+         +-------+-------+
+                 |
+                 v
+          Structured Result
+```
+
+**Text analysis** looks for patterns tied to urgency and pressure tactics, account-suspension threats, verification/credential requests, delivery scams, and investment schemes — each one contributes evidence rather than deciding the result by itself.
+
+**URL analysis** checks domain structure, typosquatting and brand-impersonation indicators, suspicious TLDs, and redirect behavior — redirect destinations get checked before the app follows them, with a hop limit, so it doesn't end up making unsafe requests on a user's behalf.
+
+**External threat intelligence** supplements the local checks against Google Safe Browsing, AbuseIPDB, and RDAP for domain registration data. A couple of additional providers are wired in for development use only. None of these are load-bearing on their own — if one is down, the app notices and says so (more on that below) instead of quietly pretending nothing's wrong.
+
+**Evidence aggregation** is the part I spent the most time getting right. Different checks can fire on the same message for different reasons, and treating every signal as equally authoritative produces a lot of false positives. So evidence carries weight — some of it's weak on its own and needs support, some of it is strong enough to move the score a lot by itself.
+
+## The idea I'm most proud of: separating risk from confidence
+
+Early on I kept running into the same problem: what should the app say when Google Safe Browsing times out, or AbuseIPDB is rate-limited? The lazy answer is to just skip that check and still mark the message "SAFE" if nothing else fired — but that's quietly lying about how thorough the check actually was.
+
+So the app tracks **analysis completeness** as its own thing, separate from the risk score. If local text/URL analysis still found something suspicious, that evidence isn't thrown away just because one external provider didn't respond — and if the overall check was limited, the result says so plainly instead of implying a full, clean bill of health.
+
+## A lesson the evaluation corpus taught me
+
+I started with a small, curated set of obvious scam examples, and the detector handled them well — which told me almost nothing. Once I expanded the test corpus to a wider, messier set of real scam and legitimate messages, previously-hidden false negatives showed up immediately. Patterns I thought were covered weren't; some legitimate messages I assumed were safe tripped signals I hadn't considered.
+
+That's the actual lesson: passing a small hand-picked test set doesn't tell you much about real-world performance. The evaluation process now leans on precision/recall across categories and treats every missed case as a prompt to go fix the underlying signal, not just patch the one example.
+
+## Architecture, at a glance
+
+- **API layer** — receives and validates requests (message length, URL count, URL length, request size are all capped before anything reaches the detection logic)
+- **Orchestration** — coordinates which detection components run
+- **Text + URL detectors** — independent, individually testable
+- **Threat intelligence integrations** — isolated from the core, so a provider outage can't take down the whole pipeline
+- **Evidence aggregation** — combines everything into one assessment
+- **Result generation** — risk score, verdict, human-readable reasons, completeness status
+
+One backend, three client surfaces (web app, Chrome extension, and an earlier Android/TWA client) — all talking to the same engine through the same API, so detection logic can't quietly drift between them.
+
+*(I've kept the actual evidence weighting and scoring internals out of this writeup on purpose — that's the part of the product I'd rather not hand to anyone for free. Glad to walk through it live.)*
 
 ## Tech stack
 
-**Backend:** Python, Flask, Gunicorn (production WSGI)
-**Detection:** Custom rule-based scoring engine (no external ML/LLM dependency for detection)
-**Threat intel:** Google Safe Browsing API, AbuseIPDB, WHOIS/domain-age lookup
-**Frontend:** Jinja2 templates, Tailwind CSS
-**Client surfaces:** Web app, Chrome extension
-**Testing:** pytest, custom evaluation harness against a labeled scam/safe message corpus
+| | |
+|---|---|
+| Python | core detection logic and backend |
+| Flask | API framework |
+| Gunicorn | production WSGI server |
+| tldextract | domain parsing |
+| dnspython | DNS lookups |
+| python-dotenv | environment/config |
 
-## Architecture (high level)
+## Privacy, briefly
 
-```
-┌─────────────┐     ┌─────────────┐
-│   Web App   │     │   Chrome    │
-│   (/, /v2)  │     │  Extension  │
-└──────┬──────┘     └──────┬──────┘
-       │                   │
-       │     shared API layer
-       │   (validation, contracts,
-       │    error handling, logging)
-       └─────────┬─────────┘
-                  │
-           ┌──────▼──────┐
-           │ Orchestrator │
-           └──────┬──────┘
-                  │
-     ┌────────────┼────────────┐
-     │            │            │
-┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-│  Text    │  │   URL    │  │ Threat   │
-│ Signals  │  │ Signals  │  │  Intel   │
-│          │  │          │  │Providers │
-└──────────┘  └──────────┘  └──────────┘
-```
+Raw messages aren't stored. Logs are written to avoid raw content. External providers only get what they need for their specific check (a URL to a URL-reputation service, not the whole message). Request tracing works off a request ID, not message content.
 
-The web app and the Chrome extension both talk to the same internal orchestrator and API contract layer — they can never fall out of sync with each other, by construction rather than by discipline.
+## Where it still falls short
 
-*(Signal weighting and scoring logic are intentionally not detailed here — that's the part of the product that's commercially sensitive. Happy to walk through it live in an interview.)*
+A SAFE verdict isn't a guarantee — it means nothing currently implemented fired, not that nothing's wrong. New scam patterns show up before the detector's been taught to catch them. The risk score is a ranking signal, not a calibrated probability — a 70 doesn't mean "70% chance this is fraud." And it's only as good as the providers it depends on, which have their own coverage gaps.
 
-## Why rule-based, not an LLM wrapper
+I'd rather say that plainly here than have someone find it out the hard way.
 
-Fraud/scam detection needs to be **explainable and auditable** — a user (or a regulator) can ask "why was this flagged?" and deserves a real answer, not a hallucination-prone model's guess. Building this as a deterministic, testable rule engine means every verdict can be traced back to specific, reproducible signals — and it can be evaluated with precision/recall like any other classifier, which is exactly what the 150+ case evaluation corpus was built to do.
+## What's next
+
+Mostly: feeding more real (and more varied) data through the evaluation corpus and fixing what it finds. I'm also curious whether a lightweight ML layer on top of the rule engine would help with borderline cases, but I haven't found a case for it yet that the rule-based approach doesn't already handle reasonably well.
 
 ---
 
-## Want to see the full source?
-
-I keep the production codebase in a private repository to protect the live product. If you're reviewing this as part of a hiring process, I'm glad to grant temporary read access or walk through the code live — just reach out.
+**Want to see the actual source?** It's private while this is a live product I'm still building on. If you're evaluating this as part of a hiring process, reach out and I'll grant access or walk through it on a call.
